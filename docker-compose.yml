@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # DragonflyDB - Redis-compatible in-memory database
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: porteight-dragonfly
+    ports:
+      - "6379:6379"
+    volumes:
+      - dragonfly-data:/data
+    command: >
+      --logtostderr
+      --cache_mode=true
+      --maxmemory=1gb
+      --proactor_threads=4
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Authentication Proxy Service
+  auth-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: porteight-auth-proxy
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - JWT_SECRET=${JWT_SECRET}
+      - TINYBIRD_WORKSPACE_ID=${TINYBIRD_WORKSPACE_ID}
+      - TINYBIRD_SIGNING_KEY=${TINYBIRD_SIGNING_KEY}
+      - TINYBIRD_API_URL=${TINYBIRD_API_URL:-https://api.tinybird.co}
+      - TINYBIRD_ADMIN_TOKEN=${TINYBIRD_ADMIN_TOKEN}
+      - DRAGONFLY_URL=redis://dragonfly:6379
+      - REDIS_MIN_CONNECTIONS=5
+      - REDIS_MAX_CONNECTIONS=20
+      - PLANETSCALE_HOST=${PLANETSCALE_HOST}
+      - PLANETSCALE_USERNAME=${PLANETSCALE_USERNAME}
+      - PLANETSCALE_PASSWORD=${PLANETSCALE_PASSWORD}
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # Prometheus for metrics collection (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: porteight-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    restart: unless-stopped
+
+  # Grafana for metrics visualization (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: porteight-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  dragonfly-data:
+  prometheus-data:
+  grafana-data: 
